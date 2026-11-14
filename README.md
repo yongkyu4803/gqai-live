@@ -35,7 +35,7 @@
 ## 설치
 
 ```bash
-git clone https://github.com/<you>/gqai-live.git
+git clone https://github.com/yongkyu4803/gqai-live.git
 cd gqai-live
 brew install cmake python@3.12        # 없을 때만
 scripts/setup-mac.sh                  # whisper.cpp 빌드 + 모델 다운로드 + Python 환경 + config.env
