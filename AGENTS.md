@@ -23,6 +23,8 @@ Personal tool, built from source on macOS. User-facing text and docs are Korean.
   Instruction mode uses `COMMAND_PROMPT` and `GQAI_COMMAND_EFFORT`, one request per recording. It is the only mode
   with tools, and only `WebSearch`/`WebFetch` (`COMMAND_TOOLS`); `_stream_command` sends only the final answer.
   Never enable file or shell tools.
+  Dictation sets `ENABLE_CLAUDEAI_MCP_SERVERS=false`: with a subscription login the CLI otherwise loads every
+  claude.ai connector (~220k input tokens per request). Instruction mode loads them but may not call them.
 - `server/whisper_server.py` — starts and talks to whisper.cpp `whisper-server` (model stays in memory).
 - `server/config.py` — all settings (`config.env` + env vars, `GQAI_` prefix). Don't hardcode paths.
 - `web/app.js` — capture (AudioWorklet), pause detection, segment queue, Claude trigger on pause, insert.
