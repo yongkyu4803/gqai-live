@@ -116,7 +116,7 @@ def _options(kind: str):
         allowed_tools=COMMAND_TOOLS if command else [],  # use them without asking
         setting_sources=[],     # ignore the user's CLAUDE.md and settings
         include_partial_messages=not command,
-        env={} if command else {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"},  # dictation: don't load claude.ai connectors (their tool list costs ~220k input tokens per request)
+        env={"ENABLE_CLAUDEAI_MCP_SERVERS": "false"},  # never load claude.ai connectors: they can't be called here, yet their tool list costs ~220k input tokens per request
         max_turns=8 if command else 1,                   # search → read → answer
     )
 

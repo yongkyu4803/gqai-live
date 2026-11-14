@@ -11,6 +11,10 @@ final class WebWindow: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMes
 
     override init() {
         let config = WKWebViewConfiguration()
+        // Shortcuts start recording while the window is closed or behind another app. By default WebKit holds
+        // getUserMedia until the page is visible and focused, so the mic never opened (no recording, no beep).
+        WebWindow.setPrivatePref(config.preferences, "_setGetUserMediaRequiresFocus:", false)
+        WebWindow.setPrivatePref(config.preferences, "_setInterruptAudioOnPageVisibilityChangeEnabled:", false)
         config.websiteDataStore = .default()   // keeps localStorage (mic choice, options) between launches
         let controller = WKUserContentController()
         config.userContentController = controller
@@ -28,6 +32,14 @@ final class WebWindow: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMes
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("GQAILiveMain")
         if window.frame.origin == .zero { window.center() }
+    }
+
+    /// Sets a private WKPreferences flag if this WebKit has it; skipped otherwise.
+    private static func setPrivatePref(_ prefs: WKPreferences, _ name: String, _ value: Bool) {
+        let sel = NSSelectorFromString(name)
+        guard prefs.responds(to: sel), let m = class_getInstanceMethod(type(of: prefs), sel) else { return }
+        typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
+        unsafeBitCast(method_getImplementation(m), to: Setter.self)(prefs, sel, value)
     }
 
     func load() {

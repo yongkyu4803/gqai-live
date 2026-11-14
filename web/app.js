@@ -90,7 +90,7 @@ function base64(bytes) {
 }
 
 // ---------------- live recording ----------------
-// Instruction mode beeps when the mic is live and when it stops: the user is looking at another app.
+// Dictation and instruction mode beep when the mic is live and when it stops: the user is often in another app.
 function beep(up) {
   try {
     const ctx = new AudioContext(), o = ctx.createOscillator(), g = ctx.createGain();
@@ -158,7 +158,7 @@ async function start(mode = 'dictate', ctx = {}) {
     const btn = mode === 'command' ? $('command') : $('toggle');
     btn.textContent = '중지'; btn.classList.add('recording');
     lockSettings(true);
-    if (mode === 'command') beep(true);
+    beep(true);
     setStatus(s, mode !== 'command' ? '말씀하세요'
       : `지시 모드 · ${s.selection ? `선택한 글 ${s.selection.length.toLocaleString()}자를 참고합니다`
           : ctx.noAccess ? '손쉬운 사용 권한이 없어 선택한 글을 읽지 못했습니다' : '선택한 글 없음'} · 지시를 말씀하세요`);
@@ -191,7 +191,7 @@ async function stop(s, note = '') {
   s.stream.getTracks().forEach(t => t.stop());
   s.node.port.onmessage = null; s.node.disconnect(); s.source.disconnect();
   if (s.context.state !== 'closed') await s.context.close();
-  if (s.mode === 'command') beep(false);
+  beep(false);
   $('level').value = 0;
   $('toggle').textContent = '시작'; $('command').textContent = '지시';
   $('toggle').classList.remove('recording'); $('command').classList.remove('recording');
