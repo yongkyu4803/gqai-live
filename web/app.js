@@ -8,9 +8,14 @@
 //   3. On stop, the remaining audio and text are processed. In the macOS app with "insert" on, this
 //      recording's cleaned text (or the raw text if cleanup failed) is sent to the app, which pastes it.
 //
+// Instruction mode (⌃⌥E in the app, ⌥E in the page): the recording is an instruction, not dictation. Nothing is
+// sent to Claude while speaking. On stop, the whole transcript goes to /api/command together with the text the
+// user had selected (the app copies it from the front app before recording). Claude's first line says whether the
+// answer replaces the selection or goes after it; the app pastes the answer accordingly.
+//
 // Native bridge (see mac/ and docs/WINDOWS.md)
-//   page → app : Native.post({type: 'state' | 'insert' | 'insertPermission', ...})
-//   app → page : window.gqaiNative.toggle() / .inserted(message) / .insertPermission(ok)
+//   page → app : Native.post({type: 'state' | 'insert' | 'insertPermission', ...})   insert: {text, source, after}
+//   app → page : window.gqaiNative.toggle(mode?, {selection, app}?) / .inserted(message) / .insertPermission(ok)
 'use strict';
 const $ = id => document.getElementById(id);
 const store = {get: k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
@@ -19,8 +24,8 @@ const store = {get: k => { try { return localStorage.getItem(k) || ''; } catch {
 // macOS WKWebView exposes webkit.messageHandlers; Windows WebView2 exposes chrome.webview.
 const Native = (() => {
   const wk = window.webkit?.messageHandlers?.gqai, wv = window.chrome?.webview;
-  if (wk) return {post: m => wk.postMessage(m), shortcut: '⌥⇧R'};
-  if (wv) return {post: m => wv.postMessage(m), shortcut: 'Ctrl+Alt+R'};
+  if (wk) return {post: m => wk.postMessage(m), shortcut: '⌃⌥R', shortcutCmd: '⌃⌥E'};
+  if (wv) return {post: m => wv.postMessage(m), shortcut: 'Ctrl+Alt+R', shortcutCmd: 'Ctrl+Alt+E'};
   return null;
 })();
 
@@ -41,7 +46,7 @@ refreshStatus();
 window.addEventListener('focus', refreshStatus);
 
 // ---------------- settings remembered per browser ----------------
-for (const id of ['language', 'pause', 'outLang']) {
+for (const id of ['language', 'pause', 'outLang', 'place']) {
   if (store.get('gqai.' + id)) $(id).value = store.get('gqai.' + id);
   $(id).onchange = () => store.set('gqai.' + id, $(id).value);
 }
@@ -85,6 +90,15 @@ function base64(bytes) {
 }
 
 // ---------------- live recording ----------------
+// Instruction mode beeps when the mic is live and when it stops: the user is looking at another app.
+function beep(up) {
+  try {
+    const ctx = new AudioContext(), o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(up ? 660 : 880, ctx.currentTime); o.frequency.linearRampToValueAtTime(up ? 880 : 520, ctx.currentTime + 0.15);
+    g.gain.setValueAtTime(0.12, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+    o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.22); o.onended = () => ctx.close();
+  } catch {}
+}
 let live = null;
 const LIMIT_SECONDS = 7200;
 function setStatus(s, extra = '') {
@@ -121,12 +135,13 @@ async function drain(s) {
     setStatus(s, e.message);
   } finally { s.processing = false; orgTick(s); finish(s); }
 }
-async function start() {
+async function start(mode = 'dictate', ctx = {}) {
   if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) { $('status').textContent = '이 브라우저는 마이크 녹음을 지원하지 않습니다.'; return; }
   const s = live = {recording: false, queue: [], parts: [], length: 0, energy: 0, silence: 0, quiet: 0, voiced: false,
                     seconds: 0, done: 0, processing: false, pauseAt: 0, language: $('language').value,
-                    pause: Number($('pause').value) || 3, rawStart: $('raw').value.length};
-  $('toggle').disabled = true;
+                    pause: Number($('pause').value) || 3, rawStart: $('raw').value.length,
+                    mode, selection: String(ctx.selection || ''), app: String(ctx.app || '')};
+  $('toggle').disabled = $('command').disabled = true;
   try {
     const id = $('mic').value;
     s.stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, ...(id ? {deviceId: {exact: id}} : {})}});
@@ -140,14 +155,19 @@ async function start() {
     s.stream.getTracks().forEach(t => t.onended = () => void stop(s, '마이크가 끊겨 녹음을 멈췄습니다.'));
     s.recording = true;
     orgBegin(s);
-    $('toggle').textContent = '중지'; $('toggle').classList.add('recording');
-    lockSettings(true); setStatus(s, '말씀하세요');
+    const btn = mode === 'command' ? $('command') : $('toggle');
+    btn.textContent = '중지'; btn.classList.add('recording');
+    lockSettings(true);
+    if (mode === 'command') beep(true);
+    setStatus(s, mode !== 'command' ? '말씀하세요'
+      : `지시 모드 · ${s.selection ? `선택한 글 ${s.selection.length.toLocaleString()}자를 참고합니다`
+          : ctx.noAccess ? '손쉬운 사용 권한이 없어 선택한 글을 읽지 못했습니다' : '선택한 글 없음'} · 지시를 말씀하세요`);
   } catch (e) {
     s.stream?.getTracks().forEach(t => t.stop());
     if (s.context && s.context.state !== 'closed') await s.context.close();
     live = null;
     $('status').textContent = e.name === 'NotAllowedError' ? '마이크 권한이 필요합니다. 허용한 뒤 다시 시작하세요.' : `시작하지 못했습니다: ${e.message}`;
-  } finally { $('toggle').disabled = false; }
+  } finally { $('toggle').disabled = $('command').disabled = false; }
 }
 function onFrame(s, data) {
   if (!s.recording) return;
@@ -171,7 +191,10 @@ async function stop(s, note = '') {
   s.stream.getTracks().forEach(t => t.stop());
   s.node.port.onmessage = null; s.node.disconnect(); s.source.disconnect();
   if (s.context.state !== 'closed') await s.context.close();
-  $('level').value = 0; $('toggle').textContent = '시작'; $('toggle').classList.remove('recording');
+  if (s.mode === 'command') beep(false);
+  $('level').value = 0;
+  $('toggle').textContent = '시작'; $('command').textContent = '지시';
+  $('toggle').classList.remove('recording'); $('command').classList.remove('recording');
   flush(s); setStatus(s, note || '남은 구간을 처리합니다.'); finish(s);
 }
 function finish(s) {
@@ -179,19 +202,34 @@ function finish(s) {
   s.finished = true;
   lockSettings(false);
   setStatus(s, s.done ? '전사 완료' : '인식된 음성이 없습니다.');
-  void orgFinish();
+  void orgFinish(s);
 }
-function lockSettings(on) { for (const id of ['mic', 'language', 'pause', 'insertOn']) $(id).disabled = on; }
-function toggle() { if (live?.recording) void stop(live); else if (!$('toggle').disabled && !(live && !live.finished)) void start(); }
-$('toggle').onclick = toggle;
+function lockSettings(on) { for (const id of ['mic', 'language', 'pause', 'insertOn', 'place']) $(id).disabled = on; }
+// mode: 'dictate' | 'command'. ctx (instruction mode): {selection, app} from the native app.
+function toggle(mode = 'dictate', ctx = null) {
+  if (live?.recording) void stop(live);
+  else if (!$('toggle').disabled && !(live && !live.finished)) void start(mode, ctx || (mode === 'command' ? pageSelection() : {}));
+}
+// In the page itself, instruction mode uses the text selected in one of the two boxes.
+function pageSelection() {
+  const el = document.activeElement;
+  const sel = el?.tagName === 'TEXTAREA' ? el.value.slice(el.selectionStart, el.selectionEnd) : '';
+  return {selection: sel, app: ''};
+}
+$('toggle').onclick = () => toggle('dictate');
+$('command').onmousedown = e => e.preventDefault();  // keep the textarea focused so its selection counts
+$('command').onclick = () => toggle('command');
 document.addEventListener('keydown', e => {
-  if (e.altKey && e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggle(); }
+  if (!e.altKey || e.metaKey || e.ctrlKey) return;
+  if (e.code === 'KeyR') { e.preventDefault(); toggle('dictate'); }
+  else if (e.code === 'KeyE') { e.preventDefault(); toggle('command'); }
 });
 window.addEventListener('pagehide', () => live?.stream?.getTracks().forEach(t => t.stop()));
 
 // ---------------- Claude cleanup ----------------
 const EMPTY_MARK = '[[EMPTY]]';
-const org = {session: null, busy: false, current: null, pending: '', due: false, failedAt: 0, failed: false, start: null, insert: false};
+const org = {session: null, busy: false, current: null, pending: '', due: false, failedAt: 0, failed: false, start: null, insert: false,
+             mode: 'dictate'};
 const orgState = t => { $('orgStatus').textContent = t; };
 const orgEnabled = () => claudeReady && $('orgOn').checked;
 const clean = t => { const s = t.replace(/\[\[EMPTY\]\]/g, ''); return s.trim() && EMPTY_MARK.startsWith(s.trim()) ? '' : s; };
@@ -199,13 +237,14 @@ const clean = t => { const s = t.replace(/\[\[EMPTY\]\]/g, ''); return s.trim() 
 function orgBegin(s) {
   org.session = crypto.randomUUID(); org.pending = ''; org.due = false; org.failed = false;
   org.start = {raw: s.rawStart, org: $('organized').value.length};
-  org.insert = !!Native && $('insertOn').checked;
-  if (orgEnabled()) void post('/api/organize/warm', {session: org.session});
+  org.mode = s.mode;
+  org.insert = !!Native && $('insertOn').checked && s.mode !== 'command';
+  if (s.mode === 'command' ? claudeReady : orgEnabled()) void post('/api/organize/warm', {session: org.session, kind: s.mode});
 }
 function orgFeed(text) { org.pending += (org.pending ? ' ' : '') + text; }
 // Called on every audio frame and whenever the transcription queue drains.
 function orgTick(s) {
-  if (!orgEnabled()) return;
+  if (!orgEnabled() || s.mode === 'command') return;  // an instruction is sent once, after stopping
   // Remember the pause even while Whisper is still busy, and send once the text before it has arrived.
   if (s.recording && s.quiet >= s.pause && !s.pauseAt) s.pauseAt = performance.now();
   if (!s.pauseAt || !org.pending.trim() || s.queue.length || s.processing) return;
@@ -268,8 +307,12 @@ function orgSend() {
   })();
   return org.current.then(ok => { if (ok && org.due && org.pending.trim()) void orgSend(); return ok; });
 }
-async function orgFinish() {
+async function orgFinish(s) {
   const session = org.session;
+  if (s.mode === 'command') {
+    try { await commandRun(s); } finally { if (session) void post('/api/organize/end', {session}); org.session = null; }
+    return;
+  }
   while (org.busy) await org.current;
   if (orgEnabled() && org.pending.trim()) { org.failedAt = 0; await orgSend(); while (org.busy) await org.current; }
   if (org.insert) orgInsert();
@@ -285,6 +328,56 @@ function orgInsert() {
   if (!text) { orgState(raw ? '정리할 내용이 없어(잡음) 넣지 않았습니다.' : '넣을 내용이 없습니다.'); return; }
   orgState('앞 앱 입력창에 넣는 중…');
   Native.post({type: 'insert', text, source: useRaw ? 'raw' : 'organized'});
+}
+
+// ---------------- instruction mode ----------------
+const PLACE_MARK = /^\[\[(REPLACE|AFTER)\]\][ \t]*(\r?\n|$)/;
+// Splits Claude's answer into the place mark (first line, only when there was a selection) and the body.
+function commandParse(t, hasSelection) {
+  t = clean(t).replace(/^\s+/, '');
+  if (!hasSelection) return {place: null, body: t};
+  const m = t.match(PLACE_MARK);
+  if (m) return {place: m[1] === 'REPLACE' ? 'replace' : 'after', body: t.slice(m[0].length).replace(/^\s+/, '')};
+  if (['[[REPLACE]]', '[[AFTER]]'].some(k => k.startsWith(t) || (t.startsWith(k) && !/\n/.test(t)))) return {place: null, body: ''};
+  return {place: null, body: t};
+}
+async function commandRun(s) {
+  const instruction = $('raw').value.slice(s.rawStart).trim();
+  if (!instruction) { orgState('지시가 인식되지 않았습니다.'); return; }
+  if (!claudeReady) { orgState('Claude 인증이 필요합니다.'); return; }
+  const box = $('organized'), before = box.value, sep = before.trim() ? '\n\n' : '';
+  const hasSel = !!s.selection.trim(), forced = Native && $('place').value !== 'auto' ? $('place').value : 'auto';
+  org.busy = true; box.readOnly = true; orgState('Claude가 지시를 수행하는 중…');
+  let streamed = '', failure = null, done = false;
+  try {
+    const res = await post('/api/command', {session: org.session, instruction, selection: s.selection, place: forced,
+                                            lang: $('outLang').value, app: s.app});
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '지시를 보내지 못했습니다.');
+    await readSSE(res, (ev, data) => {
+      if (ev === 'delta') {
+        streamed += data.text; const {body} = commandParse(streamed, hasSel);
+        box.value = before + (body ? sep : '') + body; box.scrollTop = box.scrollHeight;
+      } else if (ev === 'progress') orgState(data.phase === 'searching'
+          ? `Claude가 웹을 검색하는 중 (${data.count || 1}번째)… ${data.seconds ? data.seconds + '초' : ''}`
+          : `Claude가 지시를 수행하는 중… ${data.seconds}초`);
+      else if (ev === 'error') failure = data.message;
+      else if (ev === 'done') done = true;
+    });
+    if (failure) throw new Error(failure);
+    if (!done) throw new Error('응답이 중간에 끊겼습니다.');
+  } catch (e) {
+    box.value = before; orgState(e.message.replace(/^정리 실패/, '지시 실패')); return;
+  } finally { org.busy = false; box.readOnly = false; }
+  const {place, body} = commandParse(streamed, hasSel);
+  const text = body.trim();
+  if (!text) { box.value = before; orgState('무엇을 하라는 지시인지 알아듣지 못했습니다. 다시 말씀해 주세요.'); return; }
+  const after = hasSel && (forced !== 'auto' ? forced : place || 'after') === 'after';
+  if (!Native || !s.app) {
+    orgState(hasSel ? `완료 · ${after ? '선택한 글 뒤에 넣을' : '선택한 글을 바꿀'} 글입니다. 복사해서 쓰세요.` : '완료');
+    return;
+  }
+  orgState(`${s.app}에 ${!hasSel ? '넣는' : after ? '선택한 글 뒤에 넣는' : '선택한 글을 바꾸는'} 중…`);
+  Native.post({type: 'insert', text: after ? '\n' + text : text, source: 'command', after});
 }
 
 // ---------------- buttons ----------------
@@ -323,12 +416,12 @@ window.gqaiNative = {
   },
   state() {
     return {recording: !!live?.recording, processing: !!(live && !live.finished && !live.recording),
-            organizing: org.busy, seconds: Math.floor(live?.seconds || 0)};
+            organizing: org.busy, seconds: Math.floor(live?.seconds || 0), mode: live?.mode || 'dictate'};
   },
 };
 if (Native) {
-  $('shortcut').textContent = Native.shortcut;
-  $('insertRow').hidden = false;
+  $('shortcut').textContent = Native.shortcut; $('shortcutCmd').textContent = Native.shortcutCmd;
+  $('insertRow').hidden = false; $('placeRow').hidden = false;
   $('insertOn').checked = store.get('gqai.insert') === '1';
   const ask = () => Native.post({type: 'insertPermission'});
   $('insertOn').onchange = () => { store.set('gqai.insert', $('insertOn').checked ? '1' : '0'); if ($('insertOn').checked) ask(); };

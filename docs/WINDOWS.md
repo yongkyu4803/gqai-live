@@ -89,19 +89,22 @@ C# 하나로 만드는 것이 가장 단순합니다.
 
 | type | 내용 | 앱이 할 일 |
 |---|---|---|
-| `state` | `{recording, processing, organizing, seconds}` 상태가 바뀔 때마다 | 트레이 아이콘·툴팁 갱신. `recording`이 false→true로 바뀌면 "녹음 시작" 처리(아래) |
+| `state` | `{recording, processing, organizing, seconds, mode}` 상태가 바뀔 때마다 (`mode`: `"dictate"` \| `"command"`) | 트레이 아이콘·툴팁 갱신. `recording`이 false→true로 바뀌면 "녹음 시작" 처리(아래) |
 | `insertPermission` | 사용자가 "앞 앱에 넣기"를 켰을 때 | Windows는 권한이 필요 없으므로 바로 `insertPermission(true)` 응답 |
-| `insert` | `{text, source: "organized" \| "raw"}` 녹음이 끝나고 넣을 글 | 기억해 둔 앞 창에 붙여 넣기 |
+| `insert` | `{text, source: "organized" \| "raw" \| "command", after}` 녹음이 끝나고 넣을 글 | 기억해 둔 앞 창에 붙여 넣기. `after`가 true면 붙여 넣기 전에 → 키로 선택을 풀어 선택한 글 뒤에 넣습니다 |
 
 **앱 → 페이지** (`webView.CoreWebView2.ExecuteScriptAsync("…")`)
 
 | 호출 | 언제 |
 |---|---|
-| `window.gqaiNative.toggle()` | 전역 단축키나 트레이 메뉴로 시작/중지할 때 |
+| `window.gqaiNative.toggle("dictate")` | 받아쓰기 단축키(Ctrl+Alt+R)나 트레이 메뉴로 시작/중지할 때 |
+| `window.gqaiNative.toggle("command", {selection, app, noAccess})` | 지시 단축키(Ctrl+Alt+E)로 시작할 때. 앱이 먼저 Ctrl+C로 앞 창의 선택한 글을 읽어 `selection`에 넣고(없으면 `""`), 클립보드를 되돌립니다. `app`은 앞 앱 이름. 중지할 때는 인자 없이 `toggle("command")` |
 | `window.gqaiNative.inserted("메시지")` | 넣기를 끝냈거나 실패했을 때(문자열은 JSON으로 이스케이프) |
 | `window.gqaiNative.insertPermission(true)` | `insertPermission` 메시지에 대한 답 |
 
-페이지는 `window.chrome.webview`가 있으면 단축키 안내를 `Ctrl+Alt+R`로 표시합니다.
+페이지는 `window.chrome.webview`가 있으면 단축키 안내를 `Ctrl+Alt+R` / `Ctrl+Alt+E`로 표시합니다.
+
+지시 모드의 선택 읽기(Mac `TextInserter.captureSelection`)는 넣기의 반대입니다: 클립보드 저장 → 단축키의 수정 키가 떼어질 때까지 잠깐 기다림 → Ctrl+C → 클립보드 순번(`GetClipboardSequenceNumber`)이 0.75초 안에 바뀌면 그 글을 읽고 → 원래 클립보드로 되돌림. 순번이 안 바뀌면 선택한 글이 없는 것으로 봅니다.
 
 ### 4.3 녹음 시작 → 넣기 흐름
 
@@ -118,7 +121,7 @@ Mac의 `TextInserter.swift`와 같은 규칙입니다.
    2) 넣을 글을 클립보드에 넣은 뒤,
    3) 대상 창을 앞으로 가져오고(대부분 이미 앞에 있음),
    4) `SendInput`으로 Ctrl+V를 보내고,
-   5) 0.5~1초 뒤 클립보드가 그사이 바뀌지 않았으면 원래 내용으로 되돌립니다.
+   5) 약 2초 뒤 클립보드가 그사이 바뀌지 않았으면 원래 내용으로 되돌립니다(구글 문서 같은 웹앱은 붙여 넣기를 늦게 읽습니다).
 6. 결과를 `inserted("…에 넣었습니다")`로 페이지에 알립니다.
 
 ### 4.4 코드 스케치 (C#)
@@ -185,6 +188,7 @@ if (Clipboard.GetText() == text && saved != null) Clipboard.SetDataObject(saved,
 - [ ] 브라우저로 `http://127.0.0.1:7860` 에서 말하면 원문이 쌓이고, 쉬면 정리된 글이 붙는다
 - [ ] 앱 창에서 마이크 권한을 묻지 않고(또는 한 번만 묻고) 녹음된다
 - [ ] 메모장에 커서를 두고 Ctrl+Alt+R → 말하기 → Ctrl+Alt+R 하면 정리된 글이 메모장에 들어간다
+- [ ] 메모장에서 문단을 선택하고 Ctrl+Alt+E → "간결하게 다듬어 줘" → Ctrl+Alt+E 하면 선택한 글이 바뀌고, 클립보드는 원래대로 남는다
 - [ ] 붙여 넣은 뒤 클립보드가 원래 내용으로 돌아온다
 - [ ] Chrome 주소창, Slack, Claude 데스크톱 앱 입력창에도 들어간다
 - [ ] 관리자 권한 창에서는 클립보드에 남고 안내가 뜬다

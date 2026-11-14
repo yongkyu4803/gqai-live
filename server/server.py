@@ -5,7 +5,9 @@ Routes
   GET  /api/status            Whisper and Claude readiness
   POST /api/transcribe        {audio: base64 16 kHz mono PCM16 WAV, language} -> {text}
   POST /api/organize          {session, text, context, lang} -> text/event-stream: delta / done / error
-  POST /api/organize/warm     {session}   pre-start the Claude session for a recording
+  POST /api/command           {session, instruction, selection, place, lang, app} -> event-stream, like organize
+                              (instruction mode: carry out a spoken instruction on the selected text)
+  POST /api/organize/warm     {session, kind}   pre-start the Claude session for a recording
   POST /api/organize/end      {session}   close it
   GET  /api/dictionary        {words}
   POST /api/dictionary        {action: add|delete, term, note}
@@ -128,9 +130,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, transcribe(d))
             if self.path == "/api/organize":
                 return self.organize(organizer.validate(d))
+            if self.path == "/api/command":
+                return self.organize(organizer.validate_command(d))
             if self.path == "/api/organize/warm":
                 if organizer.auth_status()["loggedIn"]:
-                    ORGANIZER.warm(str(uuid.UUID(str(d.get("session")))))
+                    ORGANIZER.warm(str(uuid.UUID(str(d.get("session")))),
+                                   "command" if d.get("kind") == "command" else "dictate")
                 return self.send(200, {"ok": True})
             if self.path == "/api/organize/end":
                 ORGANIZER.end(str(d.get("session") or ""))
@@ -160,7 +165,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "close")
         self.end_headers()
-        alive, started = True, time.monotonic()
+        alive, started, phase = True, time.monotonic(), {}
 
         def emit(event, data):
             nonlocal alive
@@ -176,10 +181,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 ev, data = q.get(timeout=2)
             except queue.Empty:
-                emit("progress", {"seconds": int(time.monotonic() - started)})
+                emit("progress", {**phase, "seconds": int(time.monotonic() - started)})
                 continue
             if ev == "_end":
                 break
+            if ev == "progress":
+                phase = {k: v for k, v in data.items() if k != "seconds"}  # keep it in the heartbeat
             emit(ev, data)
         try:
             text = fut.result()

@@ -24,7 +24,8 @@ select,input[type=text]{font:inherit;color:var(--ink);background:var(--card);bor
 button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:6px 12px}
 button:disabled{opacity:.45;cursor:default}
 #toggle{background:var(--accent);color:var(--accent-ink);border:none;padding:10px 22px;font-weight:600;border-radius:10px}
-#toggle.recording{background:var(--rec);color:#fff}
+#toggle.recording,#command.recording{background:var(--rec);color:#fff;border-color:var(--rec)}
+#command{padding:10px 18px;font-weight:600;border-radius:10px}
 .check{display:flex;gap:6px;align-items:center;color:var(--ink);font-size:14px}
 progress{width:160px;height:8px}
 #status{color:var(--mut);font-size:13px;margin:8px 0 0}
@@ -55,10 +56,12 @@ details summary{cursor:pointer;font-weight:600}
   <div class="row" style="margin-top:12px">
     <label class="check"><input type="checkbox" id="orgOn" checked> Claude로 정리</label>
     <label class="check" id="insertRow" hidden><input type="checkbox" id="insertOn"> 멈추면 앞 앱 입력창에 바로 넣기</label>
+    <span id="placeRow" hidden><label for="place">지시 결과를 넣는 곳</label> <select id="place"><option value="auto">지시에 따라 (Claude가 판단)</option><option value="replace">선택한 글을 바꾸기</option><option value="after">선택한 글 뒤에 넣기</option></select></span>
   </div>
   <div class="row" style="margin-top:14px">
     <button id="toggle">시작</button>
-    <span class="note">단축키 <kbd id="shortcut">⌥R</kbd></span>
+    <button id="command" title="말로 지시하면 Claude가 수행한 결과를 씁니다. 선택한 글이 있으면 참고합니다.">지시</button>
+    <span class="note">받아쓰기 <kbd id="shortcut">⌥R</kbd> · 지시 <kbd id="shortcutCmd">⌥E</kbd></span>
     <progress id="level" max="1" value="0" aria-label="입력 크기"></progress>
   </div>
   <p id="status" role="status" aria-live="polite">시작을 누르면 마이크 권한을 요청합니다.</p>

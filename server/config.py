@@ -52,5 +52,6 @@ WHISPER_SERVER_PORT = int(os.environ.get("GQAI_WHISPER_PORT", "8178"))
 
 CLAUDE_MODEL = os.environ.get("GQAI_CLAUDE_MODEL", "claude-sonnet-5-5")
 CLAUDE_EFFORT = os.environ.get("GQAI_CLAUDE_EFFORT", "low")
+COMMAND_EFFORT = os.environ.get("GQAI_COMMAND_EFFORT", "medium")  # instruction mode thinks more
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)

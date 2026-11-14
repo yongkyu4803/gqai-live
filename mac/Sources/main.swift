@@ -2,26 +2,35 @@ import AppKit
 import Carbon.HIToolbox
 import UserNotifications
 
-/// GQAI Live for macOS: a window with the local page, a menu bar icon, the global shortcut ⌥⇧R and
-/// "paste into the front app" after a recording.
+/// GQAI Live for macOS: a window with the local page, a menu bar icon, the global shortcuts ⌃⌥R (dictation)
+/// and ⌃⌥E (instruction mode), and "paste into the front app" after a recording.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let server = ServerManager()
     let inserter = TextInserter()
     var web: WebWindow!
     var statusItem: NSStatusItem!
     var hotKey: HotKey?
+    var commandKey: HotKey?
+    var altKeys: [HotKey] = []
+    var capturing = false
     var state: [String: Any] = [:]
     var ready = false
     let stateLine = NSMenuItem(title: "서버 준비 중…", action: nil, keyEquivalent: "")
-    let toggleItem = NSMenuItem(title: "녹음 시작", action: #selector(toggleRecording), keyEquivalent: "")
+    let toggleItem = NSMenuItem(title: "받아쓰기 시작", action: #selector(toggleRecording), keyEquivalent: "")
+    let commandItem = NSMenuItem(title: "지시 시작", action: #selector(toggleCommand), keyEquivalent: "")
 
     func applicationDidFinishLaunching(_ note: Notification) {
         buildMainMenu()
         buildStatusItem()
         web = WebWindow()
         web.onMessage = { [weak self] in self?.handle($0) }
-        // ⌥⇧R anywhere: start/stop. Change keyCode/modifiers here to use another shortcut.
-        hotKey = HotKey(keyCode: kVK_ANSI_R, modifiers: optionKey | shiftKey) { [weak self] in self?.toggleRecording() }
+        // ⌃⌥R anywhere: start/stop dictation. ⌃⌥E: instruction mode (reads the selection, speak an instruction,
+        // Claude's answer is pasted). Change keyCode/modifiers here to use other shortcuts.
+        hotKey = HotKey(keyCode: kVK_ANSI_R, modifiers: controlKey | optionKey) { [weak self] in self?.toggleRecording() }
+        commandKey = HotKey(keyCode: kVK_ANSI_E, modifiers: controlKey | optionKey) { [weak self] in self?.toggleCommand() }
+        // ⌥⇧R / ⌥⇧E also work (the first shortcuts this app had).
+        altKeys = [HotKey(keyCode: kVK_ANSI_R, modifiers: optionKey | shiftKey) { [weak self] in self?.toggleRecording() },
+                   HotKey(keyCode: kVK_ANSI_E, modifiers: optionKey | shiftKey) { [weak self] in self?.toggleCommand() }].compactMap { $0 }
         server.onUnexpectedExit = { [weak self] in
             self?.ready = false
             self?.notify("로컬 서버가 종료됐습니다", "메뉴 막대 → ‘서버 다시 시작’을 눌러 주세요.")
@@ -62,7 +71,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleRecording() {
         guard ready else { showWindow(); return }
         if state["recording"] as? Bool != true { inserter.noteStartRequest() }  // remember the front app
-        web.evaluate("window.gqaiNative && window.gqaiNative.toggle()")
+        web.evaluate("window.gqaiNative && window.gqaiNative.toggle('dictate')")
+    }
+
+    /// Instruction mode. Copies the front app's selection first, then starts recording; pressing again stops.
+    @objc func toggleCommand() {
+        guard ready else { showWindow(); return }
+        if state["recording"] as? Bool == true || state["processing"] as? Bool == true {
+            return web.evaluate("window.gqaiNative && window.gqaiNative.toggle('command')")
+        }
+        guard !capturing else { return }
+        let front = NSWorkspace.shared.frontmostApplication
+        guard let front, front.processIdentifier != getpid() else {  // from our own window: the page's selection
+            return web.evaluate("window.gqaiNative && window.gqaiNative.toggle('command')")
+        }
+        inserter.noteStartRequest()
+        let trusted = AXIsProcessTrusted()
+        capturing = true
+        inserter.captureSelection { [weak self] selection in
+            guard let self else { return }
+            self.capturing = false
+            let ctx: [String: Any] = ["selection": selection, "app": front.localizedName ?? "앞 앱", "noAccess": !trusted]
+            let json = (try? JSONSerialization.data(withJSONObject: ctx)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            self.web.evaluate("window.gqaiNative && window.gqaiNative.toggle('command', \(json))")
+        }
     }
 
     // MARK: Messages from the page
@@ -78,7 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             web.evaluate("window.gqaiNative && window.gqaiNative.insertPermission(\(ok))")
         case "insert":
             guard let text = body["text"] as? String else { return }
-            inserter.insert(text) { [weak self] message, ok in
+            inserter.insert(text, after: body["after"] as? Bool == true) { [weak self] message, ok in
                 guard let self else { return }
                 let js = (try? String(data: JSONSerialization.data(withJSONObject: [message]), encoding: .utf8)) ?? "[\"\"]"
                 self.web.evaluate("window.gqaiNative && window.gqaiNative.inserted(\(js)[0])")
@@ -98,8 +130,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         toggleItem.target = self
         toggleItem.keyEquivalent = "r"
-        toggleItem.keyEquivalentModifierMask = [.option, .shift]
+        toggleItem.keyEquivalentModifierMask = [.control, .option]
         menu.addItem(toggleItem)
+        commandItem.target = self
+        commandItem.keyEquivalent = "e"
+        commandItem.keyEquivalentModifierMask = [.control, .option]
+        menu.addItem(commandItem)
         menu.addItem(item("GQAI Live 창 열기", #selector(showWindow)))
         menu.addItem(.separator())
         menu.addItem(item("서버 다시 시작", #selector(restartServer)))
@@ -124,11 +160,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !ready { stateLine.title = "서버 준비 중…" }
         else if recording {
             let sec = state["seconds"] as? Int ?? 0
-            stateLine.title = String(format: "● 녹음 중 %d:%02d", sec / 60, sec % 60)
+            let label = state["mode"] as? String == "command" ? "지시" : "녹음"
+            stateLine.title = String(format: "● %@ 중 %d:%02d", label, sec / 60, sec % 60)
         } else if busy { stateLine.title = "처리 중" }
         else { stateLine.title = "대기 중" }
-        toggleItem.title = recording ? "녹음 중지" : "녹음 시작"
-        toggleItem.isEnabled = ready
+        let command = state["mode"] as? String == "command"
+        toggleItem.title = recording && !command ? "받아쓰기 중지" : "받아쓰기 시작"
+        commandItem.title = recording && command ? "지시 중지" : "지시 시작"
+        toggleItem.isEnabled = ready && !(recording && command)
+        commandItem.isEnabled = ready && !(recording && !command)
     }
 
     func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {

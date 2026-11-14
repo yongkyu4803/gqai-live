@@ -1,6 +1,8 @@
 # Notes for AI coding agents
 
 GQAI Live: microphone → local Whisper (whisper.cpp) → Claude cleanup → (macOS app) paste into the front app.
+Instruction mode (⌃⌥E): the app copies the front app's selection, the user speaks an instruction, Claude's answer is
+pasted (replacing the selection or after it).
 Personal tool, built from source on macOS. User-facing text and docs are Korean.
 
 ## Read first
@@ -14,17 +16,22 @@ Personal tool, built from source on macOS. User-facing text and docs are Korean.
 ## Layout and flow
 - `server/server.py` — routes. `/api/transcribe` takes one live segment as base64 16 kHz mono PCM16 WAV (≤21 s);
   the page does the resampling, so there is no ffmpeg dependency. `/api/organize` streams SSE `delta`/`progress`/`done`/`error`.
+  `/api/command` (instruction mode) streams the same events; with a selection, the answer's first line is `[[REPLACE]]` or `[[AFTER]]`.
 - `server/organizer.py` — one `ClaudeSDKClient` per recording session (`append` only), on a dedicated asyncio loop
   thread. Tools disabled, `setting_sources=[]`. Prompt rules live in `SYSTEM_PROMPT`; per-request options
   (output language, dictionary terms) go in a `<guide>` block, re-sent only when it changes.
+  Instruction mode uses `COMMAND_PROMPT` and `GQAI_COMMAND_EFFORT`, one request per recording. It is the only mode
+  with tools, and only `WebSearch`/`WebFetch` (`COMMAND_TOOLS`); `_stream_command` sends only the final answer.
+  Never enable file or shell tools.
 - `server/whisper_server.py` — starts and talks to whisper.cpp `whisper-server` (model stays in memory).
 - `server/config.py` — all settings (`config.env` + env vars, `GQAI_` prefix). Don't hardcode paths.
 - `web/app.js` — capture (AudioWorklet), pause detection, segment queue, Claude trigger on pause, insert.
-  Native bridge: page → app `Native.post({type: state|insert|insertPermission})`;
-  app → page `window.gqaiNative.toggle() / inserted(msg) / insertPermission(ok)`.
+  Native bridge: page → app `Native.post({type: state|insert|insertPermission})` (insert: `{text, source, after}`);
+  app → page `window.gqaiNative.toggle(mode, ctx?) / inserted(msg) / insertPermission(ok)`,
+  mode `dictate`|`command`, ctx `{selection, app, noAccess}` for instruction mode.
 - `mac/Sources/` — `main.swift` (menu bar, hotkey, message handling), `WebWindow.swift` (WKWebView + bridge
-  `gqai`), `TextInserter.swift` (front app, clipboard + ⌘V, restore), `ServerManager.swift` (runs `.venv/bin/python
-  server/server.py` from the path baked into Info.plist by `build.sh`), `HotKey.swift`.
+  `gqai`), `TextInserter.swift` (front app, ⌘C selection capture, clipboard + ⌘V, restore), `ServerManager.swift` (runs `.venv/bin/python
+  server/server.py` from the path baked into Info.plist by `build.sh`), `HotKey.swift` (one shared Carbon handler for all shortcuts: a second `InstallEventHandler` fails with -9866).
 
 ## Conventions
 - Python: standard library + `claude-agent-sdk` only. No web framework.
@@ -39,4 +46,5 @@ scripts/setup-mac.sh                  # once
 scripts/run.sh                        # browser at http://127.0.0.1:7860
 mac/build.sh --no-install             # compile check for the app
 ```
-There is no automated test suite. Check by speaking into the page, and for the app: ⌥⇧R in another app's text field.
+There is no automated test suite. Check by speaking into the page, and for the app: ⌃⌥R in another app's text field,
+and ⌃⌥E with text selected there.
