@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GQAI Live</title>
+<style>
+:root{--bg:#f7f7f5;--card:#fff;--ink:#171717;--mut:#6b6b6b;--line:#e3e3df;--accent:#14866d;--accent-ink:#fff;--rec:#d92d20;--warn:#b42318}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--card:#1e1e1e;--ink:#ededed;--mut:#a0a0a0;--line:#333;--accent:#2fbf98;--accent-ink:#0b1f19;--rec:#ff6b5e;--warn:#ff8a80}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header h1{font-size:18px;margin:0}
+.chips{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;font-size:12px}
+.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;color:var(--mut)}
+.chip.ok{color:var(--accent);border-color:var(--accent)}
+.chip.bad{color:var(--warn);border-color:var(--warn)}
+main{max-width:1100px;margin:0 auto;padding:20px 16px;display:grid;gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+label{font-size:13px;color:var(--mut)}
+select,input[type=text]{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:6px 12px}
+button:disabled{opacity:.45;cursor:default}
+#toggle{background:var(--accent);color:var(--accent-ink);border:none;padding:10px 22px;font-weight:600;border-radius:10px}
+#toggle.recording{background:var(--rec);color:#fff}
+.check{display:flex;gap:6px;align-items:center;color:var(--ink);font-size:14px}
+progress{width:160px;height:8px}
+#status{color:var(--mut);font-size:13px;margin:8px 0 0}
+.panes{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:760px){.panes{grid-template-columns:1fr}}
+.pane-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.pane-head h2{font-size:15px;margin:0;margin-right:auto}
+textarea{width:100%;min-height:280px;resize:vertical;font:inherit;line-height:1.5;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px}
+#orgStatus{color:var(--mut);font-size:13px;min-height:1.5em;margin:6px 0 0}
+kbd{border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:12px}
+details summary{cursor:pointer;font-weight:600}
+#dictList{list-style:none;padding:0;margin:10px 0 0;display:flex;flex-wrap:wrap;gap:6px}
+#dictList li{border:1px solid var(--line);border-radius:999px;padding:2px 4px 2px 10px;font-size:13px;display:flex;align-items:center;gap:4px}
+#dictList button{border:none;padding:0 6px;color:var(--mut)}
+.note{color:var(--mut);font-size:12px}
+</style>
+</head>
+<body>
+<header><h1>GQAI Live</h1><div class="chips"><span class="chip" id="whisperChip">Whisper 확인 중</span><span class="chip" id="claudeChip">Claude 확인 중</span></div></header>
+<main>
+<section class="card">
+  <div class="row">
+    <label for="mic">마이크</label><select id="mic"><option value="">시스템 기본 마이크</option></select>
+    <label for="language">말하는 언어</label><select id="language"><option value="auto">자동 감지</option><option value="ko">한국어</option><option value="en">영어</option><option value="ja">일본어</option><option value="zh">중국어</option></select>
+    <label for="pause">정리할 쉼</label><select id="pause"><option value="2">2초</option><option value="3" selected>3초</option><option value="4">4초</option><option value="5">5초</option></select>
+    <label for="outLang">정리 언어</label><select id="outLang"><option value="source">말한 언어 그대로</option><option value="ko">한국어</option><option value="en">영어</option><option value="ja">일본어</option><option value="zh">중국어</option></select>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <label class="check"><input type="checkbox" id="orgOn" checked> Claude로 정리</label>
+    <label class="check" id="insertRow" hidden><input type="checkbox" id="insertOn"> 멈추면 앞 앱 입력창에 바로 넣기</label>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <button id="toggle">시작</button>
+    <span class="note">단축키 <kbd id="shortcut">⌥R</kbd></span>
+    <progress id="level" max="1" value="0" aria-label="입력 크기"></progress>
+  </div>
+  <p id="status" role="status" aria-live="polite">시작을 누르면 마이크 권한을 요청합니다.</p>
+</section>
+
+<section class="panes">
+  <div class="card">
+    <div class="pane-head"><h2>원문</h2><button id="copyRaw">복사</button></div>
+    <textarea id="raw" aria-label="원문" placeholder="말하면 여기에 전사가 쌓입니다."></textarea>
+  </div>
+  <div class="card">
+    <div class="pane-head"><h2>정리된 글</h2><button id="copyOrg">복사</button><button id="clear">모두 지우기</button></div>
+    <textarea id="organized" aria-label="정리된 글" placeholder="말을 멈추면 Claude가 정리한 글이 여기에 이어집니다."></textarea>
+    <p id="orgStatus" role="status" aria-live="polite"></p>
+  </div>
+</section>
+
+<section class="card">
+  <details><summary>용어 사전</summary>
+    <p class="note">이름·약어·전문용어를 넣으면 Whisper 인식 힌트와 Claude 표기에 함께 쓰입니다.</p>
+    <div class="row"><input id="term" type="text" maxlength="40" placeholder="용어 (예: GQAI)"><input id="termNote" type="text" maxlength="100" placeholder="설명 (선택)"><button id="termAdd">추가</button></div>
+    <ul id="dictList"></ul>
+  </details>
+</section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>__BUNDLE_ID__</string>
+  <key>CFBundleName</key><string>GQAI Live</string>
+  <key>CFBundleDisplayName</key><string>GQAI Live</string>
+  <key>CFBundleExecutable</key><string>GQAILive</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>LSMinimumSystemVersion</key><string>14.2</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>말하는 소리를 이 Mac에서 전사하려면 마이크가 필요합니다.</string>
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>GQAIProjectPath</key><string>__PROJECT_PATH__</string>
+  <key>GQAIPort</key><string>__PORT__</string>
+</dict>
+</plist>

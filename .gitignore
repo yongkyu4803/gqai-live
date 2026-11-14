@@ -1,0 +1,10 @@
+.venv/
+vendor/
+models/
+data/
+config.env
+mac/build/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
