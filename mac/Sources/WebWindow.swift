@@ -15,10 +15,17 @@ final class WebWindow: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMes
         // getUserMedia until the page is visible and focused, so the mic never opened (no recording, no beep).
         WebWindow.setPrivatePref(config.preferences, "_setGetUserMediaRequiresFocus:", false)
         WebWindow.setPrivatePref(config.preferences, "_setInterruptAudioOnPageVisibilityChangeEnabled:", false)
+        // A closed window makes the page "hidden": WebKit then throttles its timers (the state report to the app
+        // stalled) and suppresses the process.
+        WebWindow.setPrivatePref(config.preferences, "_setHiddenPageDOMTimerThrottlingEnabled:", false)
+        WebWindow.setPrivatePref(config.preferences, "_setHiddenPageDOMTimerThrottlingAutoIncreases:", false)
+        WebWindow.setPrivatePref(config.preferences, "_setPageVisibilityBasedProcessSuppressionEnabled:", false)
         config.websiteDataStore = .default()   // keeps localStorage (mic choice, options) between launches
         let controller = WKUserContentController()
         config.userContentController = controller
         webView = WKWebView(frame: .zero, configuration: config)
+        // The concealed window sits behind other windows; without this WebKit would call the page hidden again.
+        WebWindow.setPrivatePref(webView, "_setWindowOcclusionDetectionEnabled:", false)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 820),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init()
@@ -35,7 +42,7 @@ final class WebWindow: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMes
     }
 
     /// Sets a private WKPreferences flag if this WebKit has it; skipped otherwise.
-    private static func setPrivatePref(_ prefs: WKPreferences, _ name: String, _ value: Bool) {
+    private static func setPrivatePref(_ prefs: NSObject, _ name: String, _ value: Bool) {
         let sel = NSSelectorFromString(name)
         guard prefs.responds(to: sel), let m = class_getInstanceMethod(type(of: prefs), sel) else { return }
         typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
@@ -58,10 +65,31 @@ final class WebWindow: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMes
     func evaluate(_ js: String) { webView.evaluateJavaScript(js, completionHandler: nil) }
 
     // Closing the window keeps the app (and any recording) running in the menu bar.
+    /// The window is on screen for the user (not concealed). Use this instead of `window.isVisible`.
+    private(set) var isShown = true
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        sender.orderOut(nil)
-        NSApp.setActivationPolicy(.accessory)
+        conceal()
         return false
+    }
+
+    /// "Closing" keeps the window ordered in but transparent and click-through. WebKit opens the microphone
+    /// (getUserMedia) only for a page in a visible window, so an ordered-out window made shortcuts hang
+    /// with no recording and no beep.
+    func conceal() {
+        isShown = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.collectionBehavior.insert([.transient, .ignoresCycle])
+        window.orderBack(nil)
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    func reveal() {
+        isShown = true
+        window.alphaValue = 1
+        window.ignoresMouseEvents = false
+        window.collectionBehavior.remove([.transient, .ignoresCycle])
     }
 
     func userContentController(_ uc: WKUserContentController, didReceive message: WKScriptMessage) {
